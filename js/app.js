@@ -107,7 +107,31 @@ async function signUp() {
         
     } catch (error) {
         console.error('Sign up error:', error);
-        showNotification(error.message || 'Failed to create account', 'error');
+        
+        // Handle specific Firebase auth errors
+        let errorMessage = 'Failed to create account';
+        
+        switch (error.code) {
+            case 'auth/email-already-in-use':
+                errorMessage = 'This email is already registered. Please login or use a different email.';
+                break;
+            case 'auth/weak-password':
+                errorMessage = 'Password is too weak. Please use at least 6 characters.';
+                break;
+            case 'auth/invalid-email':
+                errorMessage = 'Please enter a valid email address.';
+                break;
+            case 'auth/operation-not-allowed':
+                errorMessage = 'Email/password accounts are not enabled.';
+                break;
+            case 'auth/network-request-failed':
+                errorMessage = 'Network error. Please check your internet connection.';
+                break;
+            default:
+                errorMessage = error.message || 'Failed to create account';
+        }
+        
+        showNotification(errorMessage, 'error');
     }
 }
 
