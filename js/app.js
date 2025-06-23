@@ -177,7 +177,33 @@ async function login() {
         
     } catch (error) {
         console.error('Login error:', error);
-        showNotification(error.message || 'Login failed', 'error');
+        
+        let errorMessage = 'Login failed';
+        
+        switch (error.code) {
+            case 'auth/user-not-found':
+                errorMessage = 'No account found with this email. Please sign up first.';
+                break;
+            case 'auth/wrong-password':
+                errorMessage = 'Incorrect password. Please try again.';
+                break;
+            case 'auth/invalid-email':
+                errorMessage = 'Please enter a valid email address.';
+                break;
+            case 'auth/user-disabled':
+                errorMessage = 'This account has been disabled.';
+                break;
+            case 'auth/too-many-requests':
+                errorMessage = 'Too many failed attempts. Please try again later.';
+                break;
+            case 'auth/network-request-failed':
+                errorMessage = 'Network error. Please check your internet connection.';
+                break;
+            default:
+                errorMessage = error.message || 'Login failed';
+        }
+        
+        showNotification(errorMessage, 'error');
     }
 }
 
