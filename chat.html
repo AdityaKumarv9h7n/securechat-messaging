@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureChat - Conversation</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="chat-info">
+                <h3 id="chat-partner-name">Loading...</h3>
+                <span id="online-status" class="status-offline">Offline</span>
+            </div>
+            <button onclick="leaveChat()" class="leave-btn">Leave Chat</button>
+        </div>
+
+        <div class="messages-container" id="messages-container">
+            <!-- Messages will be loaded here -->
+        </div>
+
+        <div class="message-input-container">
+            <input type="text" id="message-input" placeholder="Type your message..." onkeypress="handleKeyPress(event)">
+            <button onclick="sendMessage()" id="send-btn">Send</button>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { getDatabase } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
+
+        // Same Firebase config as index.html
+        const firebaseConfig = {
+            apiKey: "AIzaSyAIpt5WzJ7YbVjlYc8fzO3geH0bzkkg2Ko",
+            authDomain: "chat-messaging-cb39b.firebaseapp.com",
+            projectId: "chat-messaging-cb39b",
+            storageBucket: "chat-messaging-cb39b.firebasestorage.app",
+            messagingSenderId: "20929701335",
+            appId: "1:20929701335:web:63432bc7fef0918209d792",
+            measurementId: "G-ECFLJGNC39"
+            
+            
+        };
+
+        const app = initializeApp(firebaseConfig);
+        window.auth = getAuth(app);
+        window.database = getDatabase(app);
+    </script>
+    <script src="js/chat.js"></script>
+</body>
+</html>
