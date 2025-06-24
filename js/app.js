@@ -101,37 +101,16 @@ async function signUp() {
         currentUser = user;
         userPasscode = passcode;
         
+        // Store user session data
+        storeUserSession(user, passcode, name);
+        
         showNotification('Account created successfully!');
         displayUserPasscode(passcode);
         showChatAccess();
         
     } catch (error) {
         console.error('Sign up error:', error);
-        
-        // Handle specific Firebase auth errors
-        let errorMessage = 'Failed to create account';
-        
-        switch (error.code) {
-            case 'auth/email-already-in-use':
-                errorMessage = 'This email is already registered. Please login or use a different email.';
-                break;
-            case 'auth/weak-password':
-                errorMessage = 'Password is too weak. Please use at least 6 characters.';
-                break;
-            case 'auth/invalid-email':
-                errorMessage = 'Please enter a valid email address.';
-                break;
-            case 'auth/operation-not-allowed':
-                errorMessage = 'Email/password accounts are not enabled.';
-                break;
-            case 'auth/network-request-failed':
-                errorMessage = 'Network error. Please check your internet connection.';
-                break;
-            default:
-                errorMessage = error.message || 'Failed to create account';
-        }
-        
-        showNotification(errorMessage, 'error');
+        handleAuthError(error);
     }
 }
 
@@ -168,6 +147,9 @@ async function login() {
                 lastSeen: Date.now()
             });
             
+            // Store user session data
+            storeUserSession(user, userData.passcode, userData.name);
+            
             showNotification('Login successful!');
             displayUserPasscode(userData.passcode);
             showChatAccess();
@@ -177,34 +159,60 @@ async function login() {
         
     } catch (error) {
         console.error('Login error:', error);
-        
-        let errorMessage = 'Login failed';
-        
-        switch (error.code) {
-            case 'auth/user-not-found':
-                errorMessage = 'No account found with this email. Please sign up first.';
-                break;
-            case 'auth/wrong-password':
-                errorMessage = 'Incorrect password. Please try again.';
-                break;
-            case 'auth/invalid-email':
-                errorMessage = 'Please enter a valid email address.';
-                break;
-            case 'auth/user-disabled':
-                errorMessage = 'This account has been disabled.';
-                break;
-            case 'auth/too-many-requests':
-                errorMessage = 'Too many failed attempts. Please try again later.';
-                break;
-            case 'auth/network-request-failed':
-                errorMessage = 'Network error. Please check your internet connection.';
-                break;
-            default:
-                errorMessage = error.message || 'Login failed';
-        }
-        
-        showNotification(errorMessage, 'error');
+        handleAuthError(error);
     }
+}
+
+// Store user session data in localStorage
+function storeUserSession(user, passcode, name) {
+    const userData = {
+        uid: user.uid,
+        email: user.email,
+        displayName: name || user.displayName,
+        passcode: passcode
+    };
+    
+    localStorage.setItem('currentUserSession', JSON.stringify(userData));
+    localStorage.setItem('userPasscode', passcode);
+}
+
+// Handle authentication errors
+function handleAuthError(error) {
+    let errorMessage = 'Authentication failed';
+    
+    switch (error.code) {
+        case 'auth/email-already-in-use':
+            errorMessage = 'This email is already registered. Please login or use a different email.';
+            break;
+        case 'auth/weak-password':
+            errorMessage = 'Password is too weak. Please use at least 6 characters.';
+            break;
+        case 'auth/invalid-email':
+            errorMessage = 'Please enter a valid email address.';
+            break;
+        case 'auth/user-not-found':
+            errorMessage = 'No account found with this email. Please sign up first.';
+            break;
+        case 'auth/wrong-password':
+            errorMessage = 'Incorrect password. Please try again.';
+            break;
+        case 'auth/user-disabled':
+            errorMessage = 'This account has been disabled.';
+            break;
+        case 'auth/too-many-requests':
+            errorMessage = 'Too many failed attempts. Please try again later.';
+            break;
+        case 'auth/network-request-failed':
+            errorMessage = 'Network error. Please check your internet connection.';
+            break;
+        case 'auth/operation-not-allowed':
+            errorMessage = 'Email/password accounts are not enabled.';
+            break;
+        default:
+            errorMessage = error.message || 'Authentication failed';
+    }
+    
+    showNotification(errorMessage, 'error');
 }
 
 // Display user's passcode
@@ -215,11 +223,24 @@ function displayUserPasscode(passcode) {
 // Copy passcode to clipboard
 function copyPasscode() {
     const passcode = document.getElementById('user-passcode').textContent;
-    navigator.clipboard.writeText(passcode).then(() => {
-        showNotification('Passcode copied to clipboard!');
-    }).catch(() => {
-        showNotification('Failed to copy passcode', 'error');
-    });
+    if (passcode) {
+        navigator.clipboard.writeText(passcode).then(() => {
+            showNotification('Passcode copied to clipboard!');
+        }).catch(() => {
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = passcode;
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                showNotification('Passcode copied to clipboard!');
+            } catch (err) {
+                showNotification('Failed to copy passcode', 'error');
+            }
+            document.body.removeChild(textArea);
+        });
+    }
 }
 
 // Enter chat with passcode
@@ -228,6 +249,11 @@ async function enterChat() {
     
     if (!enteredPasscode) {
         showNotification('Please enter a passcode', 'error');
+        return;
+    }
+    
+    if (!currentUser || !userPasscode) {
+        showNotification('Please login first', 'error');
         return;
     }
     
@@ -249,7 +275,25 @@ async function enterChat() {
             // Create chat room ID (consistent for both users)
             const chatRoomId = [userPasscode, enteredPasscode].sort().join('-');
             
-            // Store chat room info in localStorage
+            // Store complete chat session data
+            const chatSessionData = {
+                chatRoomId: chatRoomId,
+                currentUser: {
+                    uid: currentUser.uid,
+                    displayName: currentUser.displayName,
+                    passcode: userPasscode
+                },
+                chatPartner: {
+                    userId: passcodeData.userId,
+                    userName: passcodeData.userName,
+                    passcode: enteredPasscode
+                },
+                timestamp: Date.now()
+            };
+            
+            localStorage.setItem('chatSession', JSON.stringify(chatSessionData));
+            
+            // Also store individual items for backward compatibility
             localStorage.setItem('currentChatRoom', chatRoomId);
             localStorage.setItem('chatPartner', JSON.stringify({
                 userId: passcodeData.userId,
@@ -262,8 +306,12 @@ async function enterChat() {
                 passcode: userPasscode
             }));
             
-            // Redirect to chat page
-            window.location.href = 'chat.html';
+            showNotification('Connecting to chat...');
+            
+            // Small delay to ensure data is stored
+            setTimeout(() => {
+                window.location.href = 'chat.html';
+            }, 500);
             
         } else {
             showNotification('Invalid passcode', 'error');
@@ -290,8 +338,16 @@ async function logout() {
         }
         
         await signOut(auth);
+        
+        // Clear all session data
         currentUser = null;
         userPasscode = null;
+        localStorage.removeItem('currentUserSession');
+        localStorage.removeItem('userPasscode');
+        localStorage.removeItem('chatSession');
+        localStorage.removeItem('currentChatRoom');
+        localStorage.removeItem('chatPartner');
+        localStorage.removeItem('currentUser');
         
         // Clear form fields
         document.getElementById('signup-name').value = '';
@@ -307,6 +363,25 @@ async function logout() {
     } catch (error) {
         console.error('Logout error:', error);
         showNotification('Logout failed', 'error');
+    }
+}
+
+// Initialize user session on page load
+function initializeUserSession() {
+    const savedSession = localStorage.getItem('currentUserSession');
+    if (savedSession) {
+        try {
+            const userData = JSON.parse(savedSession);
+            userPasscode = userData.passcode;
+            
+            if (userPasscode) {
+                displayUserPasscode(userPasscode);
+                showChatAccess();
+            }
+        } catch (error) {
+            console.error('Error loading saved session:', error);
+            localStorage.removeItem('currentUserSession');
+        }
     }
 }
 
@@ -331,31 +406,42 @@ auth.onAuthStateChanged(async (user) => {
                     lastSeen: Date.now()
                 });
                 
+                // Store session data
+                storeUserSession(user, userData.passcode, userData.name);
+                
                 displayUserPasscode(userData.passcode);
                 showChatAccess();
             }
         } catch (error) {
             console.error('Auth state change error:', error);
         }
+    } else if (!user) {
+        // User is signed out
+        currentUser = null;
+        userPasscode = null;
     }
 });
 
 // Handle page visibility change for online status
 document.addEventListener('visibilitychange', async () => {
     if (currentUser) {
-        const { ref, update } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
-        
-        if (document.hidden) {
-            // User left the page
-            await update(ref(database, `users/${currentUser.uid}`), {
-                isOnline: false,
-                lastSeen: Date.now()
-            });
-        } else {
-            // User returned to the page
-            await update(ref(database, `users/${currentUser.uid}`), {
-                isOnline: true
-            });
+        try {
+            const { ref, update } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
+            
+            if (document.hidden) {
+                // User left the page
+                await update(ref(database, `users/${currentUser.uid}`), {
+                    isOnline: false,
+                    lastSeen: Date.now()
+                });
+            } else {
+                // User returned to the page
+                await update(ref(database, `users/${currentUser.uid}`), {
+                    isOnline: true
+                });
+            }
+        } catch (error) {
+            console.error('Visibility change error:', error);
         }
     }
 });
@@ -363,10 +449,17 @@ document.addEventListener('visibilitychange', async () => {
 // Handle page unload
 window.addEventListener('beforeunload', async () => {
     if (currentUser) {
-        const { ref, update } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
-        await update(ref(database, `users/${currentUser.uid}`), {
-            isOnline: false,
-            lastSeen: Date.now()
-        });
+        try {
+            const { ref, update } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
+            await update(ref(database, `users/${currentUser.uid}`), {
+                isOnline: false,
+                lastSeen: Date.now()
+            });
+        } catch (error) {
+            // Ignore errors on page unload
+        }
     }
 });
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', initializeUserSession);

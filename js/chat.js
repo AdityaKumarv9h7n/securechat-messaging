@@ -7,45 +7,123 @@ let onlineStatusListener = null;
 
 // Initialize chat page
 async function initializeChat() {
-    // Get data from localStorage
-    currentChatRoom = localStorage.getItem('currentChatRoom');
-    chatPartner = JSON.parse(localStorage.getItem('chatPartner') || '{}');
-    currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    
-    if (!currentChatRoom || !chatPartner.userId || !currentUser.uid) {
-        showNotification('Invalid chat session', 'error');
-        setTimeout(() => {
-            window.location.href = 'index.html';
-        }, 2000);
-        return;
+    try {
+        // Get data from localStorage with better validation
+        const chatSessionData = localStorage.getItem('chatSession');
+        currentChatRoom = localStorage.getItem('currentChatRoom');
+        
+        // Try to get data from the comprehensive chatSession first
+        if (chatSessionData) {
+            try {
+                const sessionData = JSON.parse(chatSessionData);
+                currentChatRoom = sessionData.chatRoomId;
+                chatPartner = sessionData.chatPartner;
+                currentUser = sessionData.currentUser;
+            } catch (e) {
+                console.error('Error parsing chat session data:', e);
+            }
+        }
+        
+        // Fallback to individual localStorage items
+        if (!chatPartner || !currentUser) {
+            const chatPartnerData = localStorage.getItem('chatPartner');
+            const currentUserData = localStorage.getItem('currentUser');
+            
+            try {
+                chatPartner = chatPartnerData ? JSON.parse(chatPartnerData) : null;
+                currentUser = currentUserData ? JSON.parse(currentUserData) : null;
+            } catch (e) {
+                console.error('Error parsing localStorage data:', e);
+                chatPartner = null;
+                currentUser = null;
+            }
+        }
+        
+        // Enhanced validation with better error messages
+        if (!currentChatRoom) {
+            console.error('Missing chat room ID');
+            showInvalidSessionError('No chat room found');
+            return;
+        }
+        
+        if (!chatPartner || !chatPartner.userId || !chatPartner.userName) {
+            console.error('Missing or invalid chat partner data:', chatPartner);
+            showInvalidSessionError('Chat partner information missing');
+            return;
+        }
+        
+        if (!currentUser || !currentUser.uid || !currentUser.displayName) {
+            console.error('Missing or invalid current user data:', currentUser);
+            showInvalidSessionError('User session invalid');
+            return;
+        }
+        
+        console.log('Chat session initialized:', {
+            chatRoom: currentChatRoom,
+            partner: chatPartner.userName,
+            user: currentUser.displayName
+        });
+        
+        // Set chat partner name
+        const partnerNameElement = document.getElementById('chat-partner-name');
+        if (partnerNameElement) {
+            partnerNameElement.textContent = chatPartner.userName;
+        }
+        
+        // Load existing messages
+        await loadMessages();
+        
+        // Set up real-time listeners
+        await setupMessageListener();
+        await setupOnlineStatusListener();
+        
+        // Update user's online status
+        await updateOnlineStatus(true);
+        
+        // Focus on message input
+        const messageInput = document.getElementById('message-input');
+        if (messageInput) {
+            messageInput.focus();
+        }
+        
+        console.log('Chat initialization completed successfully');
+        
+    } catch (error) {
+        console.error('Chat initialization error:', error);
+        showInvalidSessionError('Failed to initialize chat');
     }
+}
+
+// Show invalid session error and redirect
+function showInvalidSessionError(message) {
+    console.error('Invalid chat session:', message);
+    showNotification(`Invalid chat session: ${message}`, 'error');
     
-    // Set chat partner name
-    document.getElementById('chat-partner-name').textContent = chatPartner.userName;
+    // Clear potentially corrupted session data
+    localStorage.removeItem('chatSession');
+    localStorage.removeItem('currentChatRoom');
+    localStorage.removeItem('chatPartner');
+    localStorage.removeItem('currentUser');
     
-    // Load existing messages
-    await loadMessages();
-    
-    // Set up real-time listeners
-    setupMessageListener();
-    setupOnlineStatusListener();
-    
-    // Update user's online status
-    await updateOnlineStatus(true);
-    
-    // Focus on message input
-    document.getElementById('message-input').focus();
+    setTimeout(() => {
+        window.location.href = 'index.html';
+    }, 3000);
 }
 
 // Load existing messages
 async function loadMessages() {
     try {
-        const { ref, get, orderByKey } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
+        const { ref, get } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
         
-        const messagesRef = ref(database, `chats/${currentChatRoom}/messages`);
+        const messagesRef = ref(window.database, `chats/${currentChatRoom}/messages`);
         const snapshot = await get(messagesRef);
         
         const messagesContainer = document.getElementById('messages-container');
+        if (!messagesContainer) {
+            console.error('Messages container not found');
+            return;
+        }
+        
         messagesContainer.innerHTML = '';
         
         if (snapshot.exists()) {
@@ -56,7 +134,7 @@ async function loadMessages() {
             }));
             
             // Sort messages by timestamp
-            messageArray.sort((a, b) => a.timestamp - b.timestamp);
+            messageArray.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
             
             messageArray.forEach(message => {
                 displayMessage(message);
@@ -73,11 +151,18 @@ async function loadMessages() {
 }
 
 // Set up real-time message listener
-function setupMessageListener() {
-    const { ref, onValue, orderByKey } = import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js').then(module => {
-        const messagesRef = module.ref(database, `chats/${currentChatRoom}/messages`);
+async function setupMessageListener() {
+    try {
+        const { ref, onValue, off } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
         
-        messagesListener = module.onValue(messagesRef, (snapshot) => {
+        const messagesRef = ref(window.database, `chats/${currentChatRoom}/messages`);
+        
+        // Clean up existing listener
+        if (messagesListener) {
+            off(messagesRef, 'value', messagesListener);
+        }
+        
+        messagesListener = onValue(messagesRef, (snapshot) => {
             if (snapshot.exists()) {
                 const messages = snapshot.val();
                 const messageArray = Object.entries(messages).map(([key, value]) => ({
@@ -86,44 +171,60 @@ function setupMessageListener() {
                 }));
                 
                 // Sort messages by timestamp
-                messageArray.sort((a, b) => a.timestamp - b.timestamp);
+                messageArray.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
                 
                 // Get the last message
-                const lastMessage = messageArray[messageArray.length - 1];
-                
-                // Check if this is a new message (not already displayed)
-                const existingMessage = document.querySelector(`[data-message-id="${lastMessage.id}"]`);
-                if (!existingMessage) {
-                    displayMessage(lastMessage);
-                    scrollToBottom();
+                if (messageArray.length > 0) {
+                    const lastMessage = messageArray[messageArray.length - 1];
                     
-                    // Play notification sound for received messages
-                    if (lastMessage.senderId !== currentUser.uid) {
-                        playNotificationSound();
+                    // Check if this is a new message (not already displayed)
+                    const existingMessage = document.querySelector(`[data-message-id="${lastMessage.id}"]`);
+                    if (!existingMessage) {
+                        displayMessage(lastMessage);
+                        scrollToBottom();
+                        
+                        // Play notification sound for received messages
+                        if (lastMessage.senderId !== currentUser.uid) {
+                            playNotificationSound();
+                        }
                     }
                 }
             }
         });
-    });
+        
+    } catch (error) {
+        console.error('Setup message listener error:', error);
+    }
 }
 
 // Set up online status listener
-function setupOnlineStatusListener() {
-    const { ref, onValue } = import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js').then(module => {
-        const userRef = module.ref(database, `users/${chatPartner.userId}`);
+async function setupOnlineStatusListener() {
+    try {
+        const { ref, onValue, off } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
         
-        onlineStatusListener = module.onValue(userRef, (snapshot) => {
+        const userRef = ref(window.database, `users/${chatPartner.userId}`);
+        
+        // Clean up existing listener
+        if (onlineStatusListener) {
+            off(userRef, 'value', onlineStatusListener);
+        }
+        
+        onlineStatusListener = onValue(userRef, (snapshot) => {
             if (snapshot.exists()) {
                 const userData = snapshot.val();
                 updateOnlineStatusDisplay(userData.isOnline, userData.lastSeen);
             }
         });
-    });
+        
+    } catch (error) {
+        console.error('Setup online status listener error:', error);
+    }
 }
 
 // Update online status display
 function updateOnlineStatusDisplay(isOnline, lastSeen) {
     const statusElement = document.getElementById('online-status');
+    if (!statusElement) return;
     
     if (isOnline) {
         statusElement.textContent = 'Online';
@@ -137,16 +238,23 @@ function updateOnlineStatusDisplay(isOnline, lastSeen) {
 // Send message
 async function sendMessage() {
     const messageInput = document.getElementById('message-input');
+    if (!messageInput) return;
+    
     const messageText = messageInput.value.trim();
     
     if (!messageText) {
         return;
     }
     
+    if (!currentUser || !currentUser.uid) {
+        showNotification('User session invalid', 'error');
+        return;
+    }
+    
     try {
-        const { ref, push, serverTimestamp } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
+        const { ref, push } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
         
-        const messagesRef = ref(database, `chats/${currentChatRoom}/messages`);
+        const messagesRef = ref(window.database, `chats/${currentChatRoom}/messages`);
         
         const messageData = {
             text: messageText,
@@ -170,14 +278,22 @@ async function sendMessage() {
 // Display message in chat
 function displayMessage(message) {
     const messagesContainer = document.getElementById('messages-container');
+    if (!messagesContainer) return;
+    
+    // Check if message already exists
+    const existingMessage = document.querySelector(`[data-message-id="${message.id}"]`);
+    if (existingMessage) return;
     
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${message.senderId === currentUser.uid ? 'own' : 'other'}`;
     messageDiv.setAttribute('data-message-id', message.id);
     
+    const isOwn = message.senderId === currentUser.uid;
+    const senderName = isOwn ? 'You' : (message.senderName || chatPartner.userName);
+    
     messageDiv.innerHTML = `
         <div class="message-content">
-            ${message.senderId !== currentUser.uid ? `<div class="message-sender">${message.senderName}</div>` : ''}
+            ${!isOwn ? `<div class="message-sender">${escapeHtml(senderName)}</div>` : ''}
             <div class="message-text">${escapeHtml(message.text)}</div>
             <div class="message-time">${formatTime(message.timestamp)}</div>
         </div>
@@ -196,6 +312,8 @@ function handleKeyPress(event) {
 
 // Update user's online status
 async function updateOnlineStatus(isOnline) {
+    if (!currentUser || !currentUser.uid) return;
+    
     try {
         const { ref, update } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
         
@@ -204,7 +322,7 @@ async function updateOnlineStatus(isOnline) {
             lastSeen: Date.now()
         };
         
-        await update(ref(database, `users/${currentUser.uid}`), updates);
+        await update(ref(window.database, `users/${currentUser.uid}`), updates);
         
     } catch (error) {
         console.error('Update online status error:', error);
@@ -213,28 +331,45 @@ async function updateOnlineStatus(isOnline) {
 
 // Leave chat and return to main page
 async function leaveChat() {
-    // Clean up listeners
-    if (messagesListener) {
-        messagesListener();
+    try {
+        // Clean up listeners
+        if (messagesListener) {
+            const { ref, off } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
+            const messagesRef = ref(window.database, `chats/${currentChatRoom}/messages`);
+            off(messagesRef, 'value', messagesListener);
+            messagesListener = null;
+        }
+        
+        if (onlineStatusListener) {
+            const { ref, off } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js');
+            const userRef = ref(window.database, `users/${chatPartner.userId}`);
+            off(userRef, 'value', onlineStatusListener);
+            onlineStatusListener = null;
+        }
+        
+        // Update offline status
+        await updateOnlineStatus(false);
+        
+        // Clear localStorage
+        localStorage.removeItem('chatSession');
+        localStorage.removeItem('currentChatRoom');
+        localStorage.removeItem('chatPartner');
+        localStorage.removeItem('currentUser');
+        
+        // Redirect to main page
+        window.location.href = 'index.html';
+        
+    } catch (error) {
+        console.error('Leave chat error:', error);
+        // Still redirect even if there's an error
+        window.location.href = 'index.html';
     }
-    if (onlineStatusListener) {
-        onlineStatusListener();
-    }
-    
-    // Update offline status
-    await updateOnlineStatus(false);
-    
-    // Clear localStorage
-    localStorage.removeItem('currentChatRoom');
-    localStorage.removeItem('chatPartner');
-    localStorage.removeItem('currentUser');
-    
-    // Redirect to main page
-    window.location.href = 'index.html';
 }
 
 // Utility functions
 function formatTime(timestamp) {
+    if (!timestamp) return 'Unknown time';
+    
     const date = new Date(timestamp);
     const now = new Date();
     const diffInSeconds = Math.floor((now - date) / 1000);
@@ -253,6 +388,7 @@ function formatTime(timestamp) {
 }
 
 function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
@@ -260,36 +396,57 @@ function escapeHtml(text) {
 
 function scrollToBottom() {
     const messagesContainer = document.getElementById('messages-container');
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
 }
 
 function playNotificationSound() {
-    // Create a simple notification sound
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.frequency.value = 800;
-    oscillator.type = 'sine';
-    
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.5);
+    try {
+        // Create a simple notification sound
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        
+        gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (error) {
+        // Ignore audio errors
+        console.log('Audio notification failed:', error);
+    }
 }
 
 function showNotification(message, type = 'success') {
     const notification = document.createElement('div');
     notification.className = `notification ${type}`;
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        border-radius: 4px;
+        color: white;
+        font-weight: bold;
+        z-index: 10000;
+        transition: all 0.3s ease;
+        ${type === 'success' ? 'background-color: #4CAF50;' : 'background-color: #f44336;'}
+    `;
     notification.textContent = message;
     document.body.appendChild(notification);
     
     setTimeout(() => {
-        notification.remove();
+        if (notification.parentNode) {
+            notification.remove();
+        }
     }, 3000);
 }
 
@@ -306,6 +463,11 @@ window.addEventListener('beforeunload', async () => {
         await updateOnlineStatus(false);
     }
 });
+
+// Global functions for HTML access
+window.sendMessage = sendMessage;
+window.handleKeyPress = handleKeyPress;
+window.leaveChat = leaveChat;
 
 // Initialize chat when page loads
 document.addEventListener('DOMContentLoaded', initializeChat);
